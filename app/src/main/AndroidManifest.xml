@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      DANH SACH QUYEN CO Y RUT GON CON 1 CAI.
+      KHONG co android.permission.INTERNET  -> app khong the gui du lieu ra ngoai.
+      KHONG co ACCESS_NETWORK_STATE, KHONG co AccessibilityService, KHONG co quyen bo nho.
+      Du lieu chi nam trong database cuc bo, xuat file qua SAF do nguoi dung tu chon cho.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.RecallKeeper">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          He thong goi service nay DUNG LUC co notification.
+          Khong foreground service, khong AlarmManager, khong WorkManager, khong polling.
+        -->
+        <service
+            android:name=".service.RecallListenerService"
+            android:exported="true"
+            android:label="@string/listener_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

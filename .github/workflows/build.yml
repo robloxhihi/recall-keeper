@@ -1,0 +1,110 @@
+name: build-apk
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Decode signing key if present
+        env:
+          RK_KEYSTORE_B64: ${{ secrets.RK_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$RK_KEYSTORE_B64" ]; then
+            printf '%s' "$RK_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/rk.jks"
+            echo "RK_KEYSTORE_FILE=$RUNNER_TEMP/rk.jks" >> "$GITHUB_ENV"
+            echo "SIGNING=release-key-from-secret" >> "$GITHUB_ENV"
+          else
+            echo "SIGNING=debug-key-fallback" >> "$GITHUB_ENV"
+            echo "No RK_KEYSTORE_B64 secret: APK will be signed with the CI debug key."
+          fi
+
+      - name: Build release APK
+        env:
+          RK_KEYSTORE_PASSWORD: ${{ secrets.RK_KEYSTORE_PASSWORD }}
+          RK_KEY_ALIAS: ${{ secrets.RK_KEY_ALIAS }}
+          RK_KEY_PASSWORD: ${{ secrets.RK_KEY_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Prove the APK has no INTERNET permission
+        run: |
+          set -e
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          echo "APK: $APK"
+          "$BT/aapt2" dump xmltree "$APK" --file AndroidManifest.xml > manifest-tree.txt
+          echo "--- permissions found in the shipped APK ---"
+          grep -o 'android.permission.[A-Z_]*' manifest-tree.txt | sort -u | tee permissions.txt
+          echo "--- merged manifest report (cross-check) ---"
+          grep -i 'uses-permission' app/build/outputs/logs/manifest-merger-release-report.txt || true
+          if grep -q 'android.permission.INTERNET' manifest-tree.txt; then
+            echo "FAIL: APK requests INTERNET. Aborting."
+            exit 1
+          fi
+          if grep -qi 'android.permission.INTERNET' app/build/outputs/logs/manifest-merger-release-report.txt; then
+            echo "FAIL: merged manifest contains INTERNET. Aborting."
+            exit 1
+          fi
+          echo "PASS: no INTERNET permission in APK nor in merged manifest."
+
+      - name: Hashes and signer certificate
+        run: |
+          set -e
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p dist
+          OUT="dist/RecallKeeper-1.0.0-build${{ github.run_number }}.apk"
+          cp "$APK" "$OUT"
+          {
+            echo "file: $(basename "$OUT")"
+            echo "bytes: $(stat -c%s "$OUT")"
+            echo "sha256: $(sha256sum "$OUT" | cut -d' ' -f1)"
+            echo "sha1: $(sha1sum "$OUT" | cut -d' ' -f1)"
+            echo "signing: $SIGNING"
+            echo "commit: ${{ github.sha }}"
+            echo ""
+            "$BT/apksigner" verify --print-certs "$OUT"
+          } | tee dist/HASHES.txt
+          cp permissions.txt dist/PERMISSIONS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RecallKeeper-apk
+          path: dist/
+
+      - name: Publish release with the APK attached
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: Recall Keeper 1.0.0 (build ${{ github.run_number }})
+          body: |
+            APK sideload cho nguoi dung. Xem `HASHES.txt` de doi chieu SHA-256 va chu ky.
+            `PERMISSIONS.txt` chung minh APK khong co quyen INTERNET.
+            Bao cao ky thuat: `docs/REPORT.md` trong repo.
+          files: |
+            dist/*.apk
+            dist/HASHES.txt
+            dist/PERMISSIONS.txt
