@@ -103,16 +103,50 @@ trong lần bắt tin, không đặt lịch riêng.
 
 ## 5. Quyền và riêng tư
 
-Manifest khai **đúng một quyền**: `android.permission.POST_NOTIFICATIONS` (để app hiện thông báo
+Manifest khai **một quyền thật**: `android.permission.POST_NOTIFICATIONS` (để app hiện thông báo
 trạng thái của chính nó trên Android 13+).
 
 Không có `INTERNET`, không `ACCESS_NETWORK_STATE`, không quyền bộ nhớ, không Accessibility.
-CI kiểm tra điều này bằng hai nguồn độc lập và **fail build** nếu phát hiện `INTERNET`:
+
+### Kết quả đo trên chính file APK đã phát hành
+
+Đọc trực tiếp các node `uses-permission` trong binary `AndroidManifest.xml` bằng
+`tools/axml_dump.py` (không cần aapt2), trên `RecallKeeper-1.0.0-build2.apk`:
+
+```
+android.permission.POST_NOTIFICATIONS
+com.robloxhihi.recallkeeper.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+```
+
+Hai điểm phải nói rõ, không giấu:
+
+- Quyền thứ hai **không phải quyền thật**. `androidx.core` tự sinh ra nó (tên gắn liền
+  applicationId, mức signature) để bảo vệ receiver động trên Android cũ. Nó không cho app thêm
+  khả năng gì và không truy cập được dữ liệu nào.
+- Chuỗi `android.permission.DUMP` **có xuất hiện** trong string pool của manifest, nhưng **không**
+  nằm trong node `uses-permission` nào — tức app không xin quyền đó. Đây chính là lý do phải parse
+  node chứ không grep chuỗi: grep sẽ báo nhầm.
+
+Cũng phát hiện khi parse: Room tự thêm service `androidx.room.MultiInstanceInvalidationService`
+với `exported="false"`. Đây là service nội bộ của Room, không có quyền, không nhận kết nối từ
+ngoài.
+
+Các thành phần còn lại, xác nhận đúng như thiết kế:
+
+```
+application  allowBackup=false
+activity     MainActivity  exported=true
+service      RecallListenerService  exported=true
+             permission=android.permission.BIND_NOTIFICATION_LISTENER_SERVICE
+```
+
+CI kiểm tra điều kiện không-INTERNET bằng hai nguồn độc lập và **fail build** nếu vi phạm:
 
 1. `aapt2 dump xmltree` trên chính file APK đã build.
 2. Báo cáo merged manifest của AGP (`manifest-merger-release-report.txt`).
 
-Kết quả được đính kèm release dưới tên `PERMISSIONS.txt`.
+Kết quả đính kèm release dưới tên `PERMISSIONS.txt`. Người dùng tự kiểm lại được bằng
+`python tools/axml_dump.py <file.apk>`.
 
 Các chốt khác:
 
@@ -127,9 +161,22 @@ Các chốt khác:
 
 Đã kiểm chứng bằng máy:
 
-- Build thành công trên GitHub Actions (JDK 17, AGP 8.7.3, Gradle 8.10.2, compileSdk 35).
-- APK không có quyền `INTERNET`, đối chiếu hai nguồn.
-- SHA-256, SHA-1, kích thước và chứng thư người ký của APK (`HASHES.txt`).
+- Build thành công trên GitHub Actions (JDK 17, AGP 8.7.3, Gradle 8.10.2, compileSdk 35), run 2.
+- APK không xin quyền `INTERNET` — xác nhận **hai lần độc lập**: aapt2 trong CI, và parse node
+  binary manifest ở máy local bằng `tools/axml_dump.py`.
+- Bản APK tải từ Release về máy local khớp hash tuyệt đối với `HASHES.txt` do CI sinh ra:
+
+```
+file    RecallKeeper-1.0.0-build2.apk
+bytes   6595428
+sha256  1d204d588fbfbfac4b52d1e279baa6992485e930ff1cc3cfbd13d49ebdfa5c0c
+sha1    5da1e0859075b57c162629c8b0493efe47aa8a16
+commit  3e8b354fdaeba4e7bd8835db70ea4ff180b04404
+signer  C=US, O=Android, CN=Android Debug
+        SHA-256 14ad25f77b22c59228d14ac2dc1506f22c97770ac97aa53c9b5507c149ac8168
+```
+
+  Chữ ký là **debug key của runner** (`signing: debug-key-fallback`), xem mục 8.
 
 **CHƯA kiểm chứng — phải nói thật:**
 
